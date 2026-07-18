@@ -2,7 +2,7 @@
 
 **Adaptive Daily Learning Engine.** A provider-agnostic, config-driven CLI that generates personalized daily learning sessions with an LLM, tracks your performance, and adapts using spaced repetition and competence-based topic prioritization. A subject is a swappable prompt file — same engine, any domain.
 
-> Status: **Phase 0** (skeleton + provider abstraction + hello world). Later phases add subject files, interactive sessions, persistence, the adaptive engine, and scheduling.
+> Status: **Phase 1** (subject files + session generation). Running `python main.py` generates a full 5-item learning session for the active track. Later phases add interactive scoring, persistence, the adaptive engine, and scheduling.
 
 ---
 
@@ -75,20 +75,36 @@ poetry run python main.py
 
 Switching providers is always: **one line in `config.yaml` + one key in `.env`**. No code changes.
 
+## Swapping subjects
+
+Change `active_track:` in `config.yaml` to any track defined in the `tracks:` block. Two ship with the repo:
+
+- `ml_interview` → `subjects/ml_interview.md` (ML/DL interview prep)
+- `spanish_b2` → `subjects/spanish_b2.md` (Spanish B2 fluency)
+
+Adding a track = write a new `subjects/<name>.md` in the same format + add an entry under `tracks:`. No code changes.
+
+Every session is displayed in the terminal via Rich and saved as a markdown file at `output/<track>/<date>.md` for later reference.
+
 ## Repo layout (current)
 
 ```
 orbit-learn/
 ├── config.yaml           # User configuration (safe to commit; no secrets)
-├── main.py               # Phase 0 hello-world entry point
+├── main.py               # Phase 1 entry point: load, generate, display, save
 ├── pyproject.toml        # Poetry-managed deps and project metadata
 ├── .env.example          # Template for provider API keys
 ├── src/
 │   ├── config.py         # Loads and validates config.yaml (Pydantic)
-│   └── provider.py       # The ONLY module that imports litellm
-├── subjects/             # (Phase 1) subject prompt files
+│   ├── models.py         # SubjectConfig, ItemAssignment, Item, Session
+│   ├── provider.py       # The ONLY module that imports litellm
+│   ├── session.py        # Build prompt → call LLM → parse JSON → Session
+│   └── subject.py        # Parse subject prompt files → SubjectConfig
+├── subjects/
+│   ├── ml_interview.md
+│   └── spanish_b2.md
 ├── data/                 # (Phase 2) SQLite state, gitignored
-├── output/               # (Phase 4) generated session files, gitignored
+├── output/               # Generated session markdown, gitignored
 └── docs/design_doc_v1.0.0.md
 ```
 
@@ -108,7 +124,7 @@ See [`docs/design_doc_v1.0.0.md`](docs/design_doc_v1.0.0.md) for the full archit
 | Phase | Adds |
 |---|---|
 | 0 ✅ | Skeleton, config loader, LiteLLM provider adapter (Ollama + hosted APIs), hello world |
-| 1 | Subject file parser, session generation with structured JSON output |
+| 1 ✅ | Subject file parser (ml_interview + spanish_b2), Pydantic session models, JSON-mode LLM call with retries, Rich terminal display, markdown session save |
 | 2 | SQLite persistence, `orbit learn` interactive CLI, `orbit status`, `orbit history` |
 | 3 | Adaptive scoring, spaced repetition, remediation, `orbit calibrate` |
 | 4 | Delivery methods (terminal / markdown / email), scheduling via cron or GitHub Actions |
