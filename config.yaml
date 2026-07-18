@@ -1,0 +1,55 @@
+# Orbit configuration.
+# Secrets live in .env; this file is safe to commit.
+
+# --- Provider ---
+# LiteLLM model string in the form "<provider>/<model-name>".
+# Default: local Ollama. Free, private, GPU-accelerated. Requires `ollama serve` running
+# and the model pulled (e.g. `ollama pull llama3.1:8b`).
+model: "ollama/llama3.1:8b"
+
+# Optional override for the provider's HTTP endpoint.
+# Only some providers use this. For Ollama it defaults to http://localhost:11434.
+# api_base: "http://localhost:11434"
+
+# --- Alternative providers (uncomment ONE `model:` line and set the matching API key in .env) ---
+# model: "anthropic/claude-sonnet-4-5"          # Anthropic (ANTHROPIC_API_KEY)
+# model: "openai/gpt-4o"                        # OpenAI (OPENAI_API_KEY)
+# model: "openai/gpt-4o-mini"                   # OpenAI cheap tier
+# model: "gemini/gemini-1.5-pro"                # Google (GEMINI_API_KEY)
+# model: "gemini/gemini-1.5-flash"              # Google free tier
+# model: "groq/llama-3.1-70b-versatile"         # Groq (GROQ_API_KEY) — has free tier
+
+# --- Active Track ---
+# Name of the track to run. Must exist as a key under `tracks:` below.
+active_track: "ml_interview"
+
+# --- Tracks ---
+# Each track has its own subject file, state, and settings.
+# Adding a track = adding a subject file + an entry here.
+tracks:
+  ml_interview:
+    subject_file: "subjects/ml_interview.md"
+    items_per_session: 5
+    scoring_strategy: "ewma"        # Options: ewma | sm2 | fsrs (future)
+    enable_llm_judge: false          # LLM-as-judge scoring (costs extra tokens)
+  spanish_b2:
+    subject_file: "subjects/spanish_b2.md"
+    items_per_session: 5
+    scoring_strategy: "ewma"
+    enable_llm_judge: false
+
+# --- Delivery ---
+delivery:
+  method: "terminal"                 # Options: terminal | markdown | email
+  # Email settings (only needed when method is "email"). Password via env var ORBIT_EMAIL_PASSWORD.
+  # email:
+  #   smtp_host: "smtp.gmail.com"
+  #   smtp_port: 587
+  #   from: "orbit@example.com"
+  #   to: "learner@example.com"
+
+# --- Schedule ---
+schedule:
+  enabled: false
+  time: "08:00"                      # 24h local time
+  method: "cron"                     # Options: cron | github_actions
