@@ -1,11 +1,31 @@
 [project]
 name = "orbit-learn"
-version = "0.1.0"
-description = "Adaptive daily learning engine — provider-agnostic, config-driven, prompt-file-swappable."
+version = "0.5.0"
+description = "Adaptive daily learning engine. Config-driven, LLM-agnostic, local-first spaced repetition in your terminal."
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
 license = { text = "MIT" }
 authors = [{ name = "Orbit Contributors" }]
+keywords = [
+    "learning", "spaced-repetition", "flashcards", "llm", "cli",
+    "adaptive", "education", "tutor", "ollama", "self-hosted",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Education",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Utilities",
+]
 dependencies = [
     "litellm>=1.40",
     "typer>=0.12",
@@ -18,15 +38,18 @@ dependencies = [
 email = ["resend>=2.0"]
 
 [project.scripts]
-orbit = "src.cli:app"
+orbit = "orbit_learn.cli:app"
 
-# --- Poetry-specific config ---
-# Poetry 2.x reads dependencies from [project] above and adds tooling on top.
+[project.urls]
+# Update these after you fork/publish. Left as placeholders so PyPI publish works.
+Homepage = "https://github.com/ameyskulkarni/orbit-learn"
+Repository = "https://github.com/ameyskulkarni/orbit-learn"
+Issues = "https://github.com/ameyskulkarni/orbit-learn/issues"
+
+# --- Poetry-specific config (Poetry 2.x reads [project] above; this adds tooling) ---
 
 [tool.poetry]
-# The package lives in src/ but is imported as `src` (see main.py: `from src.config import ...`).
-# When we start distributing on PyPI (Phase 5) we'll rename to a proper `orbit` package.
-packages = [{ include = "src" }]
+packages = [{ include = "orbit_learn" }]
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0"

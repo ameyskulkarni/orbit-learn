@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from src.scheduler import (
+from orbit_learn.scheduler import (
     INITIAL_INTERVAL,
     MAX_INTERVAL,
     next_interval,

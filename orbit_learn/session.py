@@ -11,8 +11,8 @@ from typing import Callable
 
 from pydantic import ValidationError
 
-from src.models import Item, ItemAssignment, Session, SubjectConfig
-from src.provider import complete
+from orbit_learn.models import Item, ItemAssignment, Session, SubjectConfig
+from orbit_learn.provider import complete
 
 MAX_RETRIES = 2  # design doc §13 Phase 1: "up to 2 retries"
 

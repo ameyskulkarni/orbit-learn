@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.scoring import (
+from orbit_learn.scoring import (
     determine_mode,
     is_needs_remediation_from_scores,
     item_difficulty,
