@@ -140,7 +140,9 @@ def record_score(
     user_answer: str | None = None,
 ) -> None:
     """Store the learner's self-score (1-5) and optional free-text answer for a single item."""
-    scored_at = datetime.now().isoformat(timespec="seconds")
+    # Microseconds precision so rapid consecutive scores (scripted or test-driven) still
+    # order deterministically in refresh_topic_stats' ORDER BY scored_at.
+    scored_at = datetime.now().isoformat(timespec="microseconds")
     conn.execute(
         "UPDATE items SET user_score = ?, user_answer = ?, scored_at = ? WHERE id = ?",
         (user_score, user_answer, scored_at, item_id),
@@ -370,7 +372,7 @@ def upsert_calibration(
     conn: sqlite3.Connection, track: str, topic: str, initial_score: int
 ) -> None:
     """Record (or overwrite) a topic's initial calibration score."""
-    calibrated_at = datetime.now().isoformat(timespec="seconds")
+    calibrated_at = datetime.now().isoformat(timespec="microseconds")
     conn.execute(
         """
         INSERT INTO calibration (track, topic, initial_score, calibrated_at)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import os
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -43,7 +44,7 @@ class TerminalDelivery:
     ) -> str | None:
         display_session_preview(self.console, session, subject, track_name)
         self.console.print(
-            f"[dim]Score later with: poetry run orbit score {session.id[:8]}[/dim]"
+            f"[dim]Score later with: orbit score {session.id[:8]}[/dim]"
         )
         return None
 
@@ -144,15 +145,18 @@ def _session_to_plaintext(session: Session, subject: SubjectConfig, track_name: 
 
 
 def _session_to_html(session: Session, subject: SubjectConfig, track_name: str) -> str:
+    """Render a session as HTML for email. All interpolated content is html-escaped so LLM output
+    containing angle-brackets (e.g. code samples with `<div>`) can't break the email body."""
     parts = [
-        f"<h1>{subject.subject}</h1>",
-        f"<p><strong>{session.date}</strong> · Track: <code>{track_name}</code> · "
-        f"{len(session.items)} items</p>",
+        f"<h1>{html.escape(subject.subject)}</h1>",
+        f"<p><strong>{html.escape(session.date)}</strong> · Track: "
+        f"<code>{html.escape(track_name)}</code> · {len(session.items)} items</p>",
     ]
     for i, item in enumerate(session.items, 1):
         parts.append(
-            f"<h2>{i}. <code>{item.topic}</code> "
-            f"<small>({item.item_type}, difficulty {item.difficulty}/5, {item.mode})</small></h2>"
+            f"<h2>{i}. <code>{html.escape(item.topic)}</code> "
+            f"<small>({html.escape(item.item_type)}, difficulty {item.difficulty}/5, "
+            f"{html.escape(item.mode)})</small></h2>"
         )
         if item.teaching_block:
             parts.append(
@@ -165,10 +169,12 @@ def _session_to_html(session: Session, subject: SubjectConfig, track_name: str) 
             )
     parts.append(
         f"<hr><p><small>Score later with "
-        f"<code>orbit score {session.id[:8]}</code>.</small></p>"
+        f"<code>orbit score {html.escape(session.id[:8])}</code>.</small></p>"
     )
     return "\n".join(parts)
 
 
 def _html_paragraphs(text: str) -> str:
-    return text.replace("\n\n", "</p><p>").replace("\n", "<br>")
+    """Escape text, then convert double newlines to paragraph breaks and single newlines to <br>."""
+    escaped = html.escape(text)
+    return escaped.replace("\n\n", "</p><p>").replace("\n", "<br>")

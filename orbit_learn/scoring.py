@@ -134,16 +134,21 @@ def is_needs_remediation_from_scores(scores_newest_first: list[int]) -> bool:
 # ============================================================================
 
 
-def _recent_scores(conn: sqlite3.Connection, track: str, topic: str, limit: int = 10) -> list[int]:
+def _scores_newest_first(conn: sqlite3.Connection, track: str, topic: str) -> list[int]:
+    """Full score history for a topic, newest first.
+
+    Used by is_needs_remediation_from_scores — walking newest → oldest to find the first
+    'trigger' (<2) or 'clear' (>=3). Must NOT be limited: a 2-heavy tail could otherwise
+    hide an earlier <2 and misreport remediation as cleared.
+    """
     rows = conn.execute(
         """
         SELECT i.user_score AS score
           FROM items i JOIN sessions s ON i.session_id = s.id
          WHERE s.track = ? AND i.topic = ? AND i.user_score IS NOT NULL
          ORDER BY i.scored_at DESC
-         LIMIT ?
         """,
-        (track, topic, limit),
+        (track, topic),
     ).fetchall()
     return [r["score"] for r in rows]
 
@@ -198,7 +203,7 @@ def plan_session(
             )
             urgency = review_urgency(next_review, today)
             needs_rem = is_needs_remediation_from_scores(
-                _recent_scores(conn, track, topic)
+                _scores_newest_first(conn, track, topic)
             )
             fatigue = _times_seen_this_week(conn, track, topic, today)
         else:

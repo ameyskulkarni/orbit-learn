@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from datetime import date as date_type
 from itertools import cycle, islice
 from random import Random
@@ -11,7 +12,7 @@ from typing import Callable
 
 from pydantic import ValidationError
 
-from orbit_learn.models import Item, ItemAssignment, Session, SubjectConfig
+from orbit_learn.models import Item, ItemAssignment, ItemMode, Session, SubjectConfig
 from orbit_learn.provider import complete
 
 MAX_RETRIES = 2  # design doc §13 Phase 1: "up to 2 retries"
@@ -66,12 +67,13 @@ def default_assignments(
     items_per_session: int,
     rng: Random | None = None,
     difficulty: int = 3,
-    mode: str = "practice",
+    mode: ItemMode = "practice",
 ) -> list[ItemAssignment]:
     """State-less selection: shuffle topics, take N, cycle item_types from SESSION_SHAPE.
 
-    Used by `main.py` (preview mode, no persistence). The interactive `orbit learn`
-    flow uses `src.scoring.plan_session` instead, which factors in per-topic history.
+    A fallback used for previews or when no per-topic history exists yet. The interactive
+    `orbit learn` flow uses `orbit_learn.scoring.plan_session` instead, which factors in
+    per-topic competence, spaced-repetition urgency, and remediation state.
     """
     rng = rng or Random()
     topics = list(subject.topics)
@@ -82,7 +84,7 @@ def default_assignments(
         raise ValueError("Subject SESSION_SHAPE has no item_types.")
     type_cycle = list(islice(cycle(types), items_per_session))
     return [
-        ItemAssignment(topic=t, item_type=ty, difficulty=difficulty, mode=mode)  # type: ignore[arg-type]
+        ItemAssignment(topic=t, item_type=ty, difficulty=difficulty, mode=mode)
         for t, ty in zip(chosen, type_cycle)
     ]
 
@@ -188,13 +190,21 @@ def generate_session(
 
 
 def _validate_against_assignments(session: Session, assignments: list[ItemAssignment]) -> None:
-    """Sanity check that the LLM returned the right number of items and honored the assigned topics."""
+    """Sanity check that the LLM returned exactly the assigned topic distribution.
+
+    Uses per-topic counts, not set-membership: an LLM returning 5 items all for topic X
+    (when we asked for 5 distinct topics) must fail so we retry rather than silently
+    over-training one topic.
+    """
     if len(session.items) != len(assignments):
         raise ValueError(
             f"LLM returned {len(session.items)} items but {len(assignments)} were requested."
         )
-    assigned_topics = {a.topic for a in assignments}
-    returned_topics = {i.topic for i in session.items}
-    unknown = returned_topics - assigned_topics
-    if unknown:
-        raise ValueError(f"LLM returned items for topics that were not assigned: {sorted(unknown)}.")
+    assigned_counts = Counter(a.topic for a in assignments)
+    returned_counts = Counter(i.topic for i in session.items)
+    if assigned_counts != returned_counts:
+        extra = {t: c for t, c in returned_counts.items() if c > assigned_counts.get(t, 0)}
+        missing = {t: c for t, c in assigned_counts.items() if c > returned_counts.get(t, 0)}
+        raise ValueError(
+            f"LLM topic-count mismatch. Extra: {extra or '{}'} · Missing: {missing or '{}'}."
+        )

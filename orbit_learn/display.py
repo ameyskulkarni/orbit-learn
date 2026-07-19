@@ -1,4 +1,4 @@
-"""Shared Rich-based rendering used by `main.py` (preview) and `orbit learn` (interactive)."""
+"""Shared Rich-based rendering (item headers, panels, markdown save) reused by CLI + delivery."""
 
 from __future__ import annotations
 

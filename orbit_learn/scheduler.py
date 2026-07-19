@@ -1,8 +1,9 @@
-"""Spaced-repetition scheduling: per-topic interval progression and review-urgency scoring.
+"""Spaced-repetition primitives: per-topic interval progression and review-urgency scoring.
 
-This is the simplified Leitner system described in design doc §7.6.
-Upgrade path: SM-2 (SuperMemo) or FSRS for evidence-based scheduling. Both would drop into
-`src/scoring.py`'s strategy pattern in Phase 6 without changing this file's public API.
+This is the simplified Leitner system described in design doc §7.6. It's the default
+scheduling strategy (wrapped as `LeitnerEWMAStrategy` in orbit_learn.strategies), and
+also supplies the `next_review_date` helper used by SM-2 and FSRS to place their
+computed intervals on the calendar.
 """
 
 from __future__ import annotations

@@ -18,7 +18,7 @@ from rich.text import Text
 
 from orbit_learn import __version__
 from orbit_learn.config import OrbitConfig, load_config
-from orbit_learn.dashboard import render_dashboard, sparkline
+from orbit_learn.dashboard import render_dashboard
 from orbit_learn.delivery import get_delivery
 from orbit_learn.display import (
     expected_panel,
@@ -232,16 +232,24 @@ def _render_checks(checks: list[tuple[str, bool, str]]) -> bool:
 
 def _check_provider(cfg: OrbitConfig) -> tuple[bool, str]:
     """Verify connectivity. Ollama = HTTP probe. Hosted = env-var presence check only."""
-    provider = cfg.model.split("/", 1)[0]
+    if "/" not in cfg.model:
+        # LiteLLM accepts bare model names (e.g. "gpt-4o") and auto-detects the provider,
+        # but that leaves us unable to point at a specific env var. Warn rather than fail.
+        return True, (
+            f"model {cfg.model!r} has no 'provider/' prefix. LiteLLM will auto-detect; "
+            f"ensure the matching env var (e.g. OPENAI_API_KEY) is set."
+        )
+
+    provider, tag = cfg.model.split("/", 1)
+
     if provider == "ollama":
         import urllib.error
         import urllib.request
-        base = cfg.api_base or "http://localhost:11434"
+        base = (cfg.api_base or "http://localhost:11434").rstrip("/")
         try:
             with urllib.request.urlopen(f"{base}/api/tags", timeout=2) as r:
                 data = json.load(r)
             names = {m["name"] for m in data.get("models", [])}
-            tag = cfg.model.split("/", 1)[1]
             if tag in names:
                 return True, f"{base} ({len(names)} models pulled, including {tag})"
             return False, (
