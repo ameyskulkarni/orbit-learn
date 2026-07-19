@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import date as date_type
@@ -10,8 +11,9 @@ from pathlib import Path
 from typing import Iterator
 
 from orbit_learn.models import Item, Session
-from orbit_learn.scheduler import INITIAL_INTERVAL, next_interval, next_review_date
+from orbit_learn.scheduler import next_review_date
 from orbit_learn.scoring import next_competence
+from orbit_learn.strategies import LeitnerEWMAStrategy, SchedulingStrategy
 
 DB_ROOT = Path("data")
 
@@ -53,6 +55,7 @@ CREATE TABLE IF NOT EXISTS topic_stats (
     current_streak  INTEGER NOT NULL DEFAULT 0,
     next_review     TEXT,
     review_interval REAL NOT NULL DEFAULT 1.0,
+    strategy_state  TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (track, topic)
 );
 
@@ -79,11 +82,22 @@ def open_db(track_name: str) -> Iterator[sqlite3.Connection]:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     conn.commit()
     try:
         yield conn
     finally:
         conn.close()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Idempotent forward migrations. Safe on both new and Phase-3 databases."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(topic_stats)")}
+    # Phase 6: pluggable scheduling strategies need per-topic opaque JSON state.
+    if "strategy_state" not in cols:
+        conn.execute(
+            "ALTER TABLE topic_stats ADD COLUMN strategy_state TEXT NOT NULL DEFAULT '{}'"
+        )
 
 
 def save_session(
@@ -134,13 +148,24 @@ def record_score(
     conn.commit()
 
 
-def refresh_topic_stats(conn: sqlite3.Connection, track: str, topic: str) -> None:
+def refresh_topic_stats(
+    conn: sqlite3.Connection,
+    track: str,
+    topic: str,
+    strategy: SchedulingStrategy | None = None,
+) -> None:
     """Recompute topic_stats for `topic` from the full scored-item history.
 
-    Deterministic and idempotent: same DB → same output. Applies EWMA competence,
-    Leitner interval progression, and next-review date. `current_streak` counts
-    consecutive scores >= 4 from the most recent backward.
+    Deterministic and idempotent: same DB + same strategy → same output. Replays
+    every score through the chosen scheduling strategy to produce interval,
+    next_review, and opaque `strategy_state` JSON. Competence stays EWMA across
+    all strategies (design doc §16.2 — competence and scheduling are orthogonal).
+
+    If `strategy` is None, defaults to LeitnerEWMAStrategy (preserves pre-Phase-6
+    behavior for callers that haven't been updated yet).
     """
+    strategy = strategy or LeitnerEWMAStrategy()
+
     rows = conn.execute(
         """
         SELECT i.user_score AS score, i.scored_at AS scored_at
@@ -155,19 +180,21 @@ def refresh_topic_stats(conn: sqlite3.Connection, track: str, topic: str) -> Non
         return
 
     scores = [r["score"] for r in rows]
+    dates = [date_type.fromisoformat(r["scored_at"][:10]) for r in rows]
 
-    # EWMA competence — first score seeds it, subsequent scores update per src.scoring.
+    # EWMA competence — same across strategies.
     competence = 0.0
     for i, s in enumerate(scores):
         competence = next_competence(competence, s, is_first=(i == 0))
 
-    # Spaced-repetition interval — replay each scoring event.
-    interval = INITIAL_INTERVAL
-    for s in scores:
-        interval = next_interval(interval, s)
+    # Replay every scoring event through the strategy.
+    state: dict = strategy.initial_state()
+    for s, d in zip(scores, dates):
+        state = strategy.update(state, s, d)
+    interval = strategy.interval_days(state)
 
     last_seen_iso = rows[-1]["scored_at"]
-    last_seen_date = date_type.fromisoformat(last_seen_iso[:10])
+    last_seen_date = dates[-1]
     next_review = next_review_date(last_seen_date, interval)
 
     times_seen = len(scores)
@@ -184,8 +211,8 @@ def refresh_topic_stats(conn: sqlite3.Connection, track: str, topic: str) -> Non
         """
         INSERT INTO topic_stats
             (track, topic, competence, times_seen, times_correct, last_seen,
-             current_streak, next_review, review_interval)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             current_streak, next_review, review_interval, strategy_state)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(track, topic) DO UPDATE SET
             competence      = excluded.competence,
             times_seen      = excluded.times_seen,
@@ -193,7 +220,8 @@ def refresh_topic_stats(conn: sqlite3.Connection, track: str, topic: str) -> Non
             last_seen       = excluded.last_seen,
             current_streak  = excluded.current_streak,
             next_review     = excluded.next_review,
-            review_interval = excluded.review_interval
+            review_interval = excluded.review_interval,
+            strategy_state  = excluded.strategy_state
         """,
         (
             track,
@@ -205,6 +233,7 @@ def refresh_topic_stats(conn: sqlite3.Connection, track: str, topic: str) -> Non
             streak,
             next_review.isoformat(),
             interval,
+            json.dumps(state, default=str),
         ),
     )
     conn.commit()
