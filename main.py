@@ -11,7 +11,7 @@ from rich.console import Console
 
 from src.config import load_config
 from src.display import display_session_preview, save_markdown_preview
-from src.session import generate_session
+from src.session import default_assignments, generate_session
 from src.subject import load_subject
 
 console = Console()
@@ -32,9 +32,12 @@ def main() -> int:
     )
     console.print()
 
+    assignments = default_assignments(
+        subject, config.active.items_per_session, difficulty=3
+    )
     session = generate_session(
         subject=subject,
-        items_per_session=config.active.items_per_session,
+        assignments=assignments,
         model=config.model,
         api_base=config.api_base,
     )
