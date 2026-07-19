@@ -4,8 +4,8 @@
 # --- Provider ---
 # LiteLLM model string in the form "<provider>/<model-name>".
 # Default: local Ollama. Free, private, GPU-accelerated. Requires `ollama serve` running
-# and the model pulled (e.g. `ollama pull llama3.1:8b`).
-model: "ollama/llama3.1:8b"
+# and the model pulled (e.g. `ollama pull qwen2.5:32b-instruct`).
+model: "ollama/qwen2.5:32b-instruct"
 
 # Optional override for the provider's HTTP endpoint.
 # Only some providers use this. For Ollama it defaults to http://localhost:11434.
@@ -30,8 +30,23 @@ tracks:
   ml_interview:
     subject_file: "subjects/ml_interview.md"
     items_per_session: 5
-    scoring_strategy: "ewma"        # Options: ewma | sm2 | fsrs (future)
-    enable_llm_judge: false          # LLM-as-judge scoring (costs extra tokens)
+    scoring_strategy: "ewma"         # Options: ewma | sm2 | fsrs (future)
+    enable_llm_judge: false           # LLM-as-judge scoring (costs extra tokens)
+  system_design:
+    subject_file: "subjects/system_design.md"
+    items_per_session: 5
+    scoring_strategy: "ewma"
+    enable_llm_judge: false
+  python_fundamentals:
+    subject_file: "subjects/python_fundamentals.md"
+    items_per_session: 5
+    scoring_strategy: "ewma"
+    enable_llm_judge: false
+  sql_mastery:
+    subject_file: "subjects/sql_mastery.md"
+    items_per_session: 5
+    scoring_strategy: "ewma"
+    enable_llm_judge: false
   spanish_b2:
     subject_file: "subjects/spanish_b2.md"
     items_per_session: 5
