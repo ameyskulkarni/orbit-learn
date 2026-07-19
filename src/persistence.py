@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Iterator
 
 from src.models import Session
+from src.scheduler import INITIAL_INTERVAL, next_interval, next_review_date
+from src.scoring import next_competence
 
 DB_ROOT = Path("data")
 
@@ -92,7 +94,7 @@ def save_session(
     raw_json: str | None = None,
 ) -> str:
     """Insert the session and its items. Returns the session id (already on the model)."""
-    created_at = datetime.now().isoformat(timespec="seconds")
+    created_at = datetime.now().isoformat(timespec="microseconds")
     conn.execute(
         "INSERT INTO sessions (id, track, date, created_at, difficulty, raw_json) "
         "VALUES (?, ?, ?, ?, ?, ?)",
@@ -135,9 +137,9 @@ def record_score(
 def refresh_topic_stats(conn: sqlite3.Connection, track: str, topic: str) -> None:
     """Recompute topic_stats for `topic` from the full scored-item history.
 
-    Phase 2 uses a simple mean of user_score for `competence`. Phase 3 replaces this
-    with EWMA (see src/scoring.py). Other columns (times_seen, times_correct,
-    current_streak, last_seen) have stable semantics across phases.
+    Deterministic and idempotent: same DB → same output. Applies EWMA competence,
+    Leitner interval progression, and next-review date. `current_streak` counts
+    consecutive scores >= 4 from the most recent backward.
     """
     rows = conn.execute(
         """
@@ -153,10 +155,23 @@ def refresh_topic_stats(conn: sqlite3.Connection, track: str, topic: str) -> Non
         return
 
     scores = [r["score"] for r in rows]
+
+    # EWMA competence — first score seeds it, subsequent scores update per src.scoring.
+    competence = 0.0
+    for i, s in enumerate(scores):
+        competence = next_competence(competence, s, is_first=(i == 0))
+
+    # Spaced-repetition interval — replay each scoring event.
+    interval = INITIAL_INTERVAL
+    for s in scores:
+        interval = next_interval(interval, s)
+
+    last_seen_iso = rows[-1]["scored_at"]
+    last_seen_date = date_type.fromisoformat(last_seen_iso[:10])
+    next_review = next_review_date(last_seen_date, interval)
+
     times_seen = len(scores)
     times_correct = sum(1 for s in scores if s >= 4)
-    competence = sum(scores) / times_seen
-    last_seen = rows[-1]["scored_at"]
 
     streak = 0
     for s in reversed(scores):
@@ -168,16 +183,74 @@ def refresh_topic_stats(conn: sqlite3.Connection, track: str, topic: str) -> Non
     conn.execute(
         """
         INSERT INTO topic_stats
-            (track, topic, competence, times_seen, times_correct, last_seen, current_streak)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (track, topic, competence, times_seen, times_correct, last_seen,
+             current_streak, next_review, review_interval)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(track, topic) DO UPDATE SET
-            competence     = excluded.competence,
-            times_seen     = excluded.times_seen,
-            times_correct  = excluded.times_correct,
-            last_seen      = excluded.last_seen,
-            current_streak = excluded.current_streak
+            competence      = excluded.competence,
+            times_seen      = excluded.times_seen,
+            times_correct   = excluded.times_correct,
+            last_seen       = excluded.last_seen,
+            current_streak  = excluded.current_streak,
+            next_review     = excluded.next_review,
+            review_interval = excluded.review_interval
         """,
-        (track, topic, competence, times_seen, times_correct, last_seen, streak),
+        (
+            track,
+            topic,
+            competence,
+            times_seen,
+            times_correct,
+            last_seen_iso,
+            streak,
+            next_review.isoformat(),
+            interval,
+        ),
+    )
+    conn.commit()
+
+
+def last_session_state(
+    conn: sqlite3.Connection, track: str
+) -> tuple[float, float] | None:
+    """Return (difficulty, avg_score) of the most-recent COMPLETED session, or None.
+
+    A session is "completed" only when every item has a user_score. Used by the
+    difficulty-adjustment formula to compute the next session's difficulty.
+    """
+    row = conn.execute(
+        """
+        SELECT s.difficulty AS difficulty,
+               AVG(i.user_score) AS avg_score,
+               SUM(CASE WHEN i.user_score IS NULL THEN 1 ELSE 0 END) AS unscored
+          FROM sessions s
+          LEFT JOIN items i ON s.id = i.session_id
+         WHERE s.track = ?
+         GROUP BY s.id
+         ORDER BY s.created_at DESC
+         LIMIT 1
+        """,
+        (track,),
+    ).fetchone()
+    if row is None or row["avg_score"] is None or (row["unscored"] or 0) > 0:
+        return None
+    return float(row["difficulty"]), float(row["avg_score"])
+
+
+def upsert_calibration(
+    conn: sqlite3.Connection, track: str, topic: str, initial_score: int
+) -> None:
+    """Record (or overwrite) a topic's initial calibration score."""
+    calibrated_at = datetime.now().isoformat(timespec="seconds")
+    conn.execute(
+        """
+        INSERT INTO calibration (track, topic, initial_score, calibrated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(track, topic) DO UPDATE SET
+            initial_score = excluded.initial_score,
+            calibrated_at = excluded.calibrated_at
+        """,
+        (track, topic, initial_score, calibrated_at),
     )
     conn.commit()
 

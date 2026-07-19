@@ -61,16 +61,17 @@ def build_system_prompt(subject: SubjectConfig) -> str:
     )
 
 
-def choose_assignments(
+def default_assignments(
     subject: SubjectConfig,
     items_per_session: int,
     rng: Random | None = None,
     difficulty: int = 3,
     mode: str = "practice",
 ) -> list[ItemAssignment]:
-    """Phase 1 placeholder: shuffle topics, take N, cycle item_types from SESSION_SHAPE.
+    """State-less selection: shuffle topics, take N, cycle item_types from SESSION_SHAPE.
 
-    Phase 3 replaces this with the adaptive scoring engine's picks.
+    Used by `main.py` (preview mode, no persistence). The interactive `orbit learn`
+    flow uses `src.scoring.plan_session` instead, which factors in per-topic history.
     """
     rng = rng or Random()
     topics = list(subject.topics)
@@ -141,17 +142,20 @@ def parse_session(raw_text: str) -> Session:
 
 def generate_session(
     subject: SubjectConfig,
-    items_per_session: int,
+    assignments: list[ItemAssignment],
     model: str,
     api_base: str | None = None,
     difficulty: float = 3.0,
     today: date_type | None = None,
-    rng: Random | None = None,
     complete_fn: Callable[..., str] = complete,
 ) -> Session:
-    """End-to-end: pick assignments, prompt the LLM, parse into a Session. Retries on malformed JSON."""
+    """Turn a list of ItemAssignments into a full Session by prompting the LLM.
+
+    Retries up to MAX_RETRIES times if the reply is malformed JSON or violates the
+    assigned topic list. The scoring engine (or `default_assignments`) is responsible
+    for picking the assignments; this function only handles the LLM round-trip.
+    """
     today = today or date_type.today()
-    assignments = choose_assignments(subject, items_per_session, rng=rng, difficulty=int(round(difficulty)))
     system_prompt = build_system_prompt(subject)
     user_prompt = build_user_prompt(assignments, difficulty, today)
 

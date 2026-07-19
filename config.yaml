@@ -4,8 +4,8 @@
 # --- Provider ---
 # LiteLLM model string in the form "<provider>/<model-name>".
 # Default: local Ollama. Free, private, GPU-accelerated. Requires `ollama serve` running
-# and the model pulled (e.g. `ollama pull llama3.1:8b`).
-model: "ollama/llama3.1:8b"
+# and the model pulled (e.g. `ollama pull qwen2.5:32b-instruct`).
+model: "ollama/qwen2.5:32b-instruct"
 
 # Optional override for the provider's HTTP endpoint.
 # Only some providers use this. For Ollama it defaults to http://localhost:11434.

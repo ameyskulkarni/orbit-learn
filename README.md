@@ -2,7 +2,7 @@
 
 **Adaptive Daily Learning Engine.** A provider-agnostic, config-driven CLI that generates personalized daily learning sessions with an LLM, tracks your performance, and adapts using spaced repetition and competence-based topic prioritization. A subject is a swappable prompt file — same engine, any domain.
 
-> Status: **Phase 2** (persistence + interactive CLI). Run `orbit learn` to generate a session and score it item-by-item; results are stored in per-track SQLite. `orbit status` shows per-topic competence; `orbit history` lists past sessions. Later phases add adaptive scoring and scheduling.
+> Status: **Phase 3** (adaptive engine). The system now picks topics via EWMA competence + spaced-repetition urgency + novelty/fatigue/remediation. Weak topics come back sooner, mastered ones drift out on doubling intervals, failed topics trigger a teaching block at reduced difficulty. Session difficulty tracks the learner. `orbit calibrate` seeds a new track. 37 unit tests cover the scoring / scheduler logic.
 
 ---
 
@@ -47,16 +47,35 @@ That's it — no API keys, no billing, your GPU does the work. Change `model:` i
 ## Commands
 
 ```
-orbit learn [--track <name>]     Generate a new session and score it item-by-item.
-                                 Prompts for optional free-text answer, then a
-                                 self-score of 1-5 per the rubric. Results are
-                                 persisted immediately.
+orbit calibrate [--track <name>] [--items N]
+                                 First-run calibration. Scores N items across
+                                 different topics at difficulties 1..5 to seed the
+                                 adaptive engine and set the starting difficulty.
+
+orbit learn [--track <name>]     Generate a new session using the adaptive engine
+                                 (weakness + spaced repetition + novelty + fatigue
+                                 + remediation) and score it item-by-item. Every
+                                 score updates EWMA competence, the review
+                                 schedule, and the track's overall difficulty.
+
 orbit status [--track <name>]    Per-topic competence, times seen, streak,
-                                 last-seen timestamp. Weakest topics first.
-orbit history [--track <name>]   [--limit N]  Recent sessions with average score.
+                                 last-seen, next-review date. Weakest topics
+                                 first, with an "unseen topics" footer.
+
+orbit history [--track <name>]   [--limit N]  Recent sessions with average score
+                                 and the difficulty they ran at.
 ```
 
 Each track uses its own SQLite DB at `data/<track>.db`. Nothing writes to `data/` unless you run a command.
+
+## Adaptive behavior
+
+- **Topic priority** = `0.35·weakness + 0.25·recency + 0.25·review-urgency + 0.10·novelty − 0.05·fatigue`; `+0.5` if in remediation. Top-N by priority → next session.
+- **EWMA competence** with α=0.3 per topic. First score seeds the value.
+- **Spaced-repetition intervals** (Leitner): pass (score ≥ 4) doubles the interval; okay (3) preserves it; fail (< 3) resets to 1 day. Capped at 30 days.
+- **Remediation**: any score < 2 triggers `teach_then_practice` mode at difficulty − 1 in the next session until a score ≥ 3 clears the flag.
+- **Track difficulty** (1.0-5.0): after every session, `+0.2` if avg ≥ 4, `−0.3` if avg ≤ 2, else `+0.1·(avg − 3)`. Drops faster than it rises.
+- **Modes**: `teach_then_practice` for never-seen or remediation topics; `review` for mastered topics past their review date; `practice` otherwise.
 
 ## Running with a hosted API (occasional / higher quality)
 
@@ -112,17 +131,22 @@ orbit-learn/
 ├── pyproject.toml        # Poetry-managed deps and project metadata
 ├── .env.example          # Template for provider API keys
 ├── src/
-│   ├── cli.py            # Typer CLI: orbit learn / status / history
+│   ├── cli.py            # Typer CLI: orbit calibrate / learn / status / history
 │   ├── config.py         # Loads and validates config.yaml (Pydantic)
 │   ├── display.py        # Shared Rich rendering (headers, panels, markdown save)
 │   ├── models.py         # SubjectConfig, ItemAssignment, Item, Session
 │   ├── persistence.py    # SQLite: sessions, items, topic_stats, calibration
 │   ├── provider.py       # The ONLY module that imports litellm
+│   ├── scheduler.py      # Spaced-repetition intervals (Leitner)
+│   ├── scoring.py        # EWMA competence, topic priority, mode selection
 │   ├── session.py        # Build prompt → call LLM → parse JSON → Session
 │   └── subject.py        # Parse subject prompt files → SubjectConfig
 ├── subjects/
 │   ├── ml_interview.md
 │   └── spanish_b2.md
+├── tests/
+│   ├── test_scheduler.py # Interval progression + review-urgency ramp
+│   └── test_scoring.py   # EWMA, difficulty, priority, mode, remediation
 ├── data/                 # SQLite state, one file per track (gitignored)
 ├── output/               # Generated session markdown (gitignored)
 └── docs/design_doc_v1.0.0.md
@@ -146,6 +170,7 @@ See [`docs/design_doc_v1.0.0.md`](docs/design_doc_v1.0.0.md) for the full archit
 | 0 ✅ | Skeleton, config loader, LiteLLM provider adapter (Ollama + hosted APIs), hello world |
 | 1 ✅ | Subject file parser (ml_interview + spanish_b2), Pydantic session models, JSON-mode LLM call with retries, Rich terminal display, markdown session save |
 | 2 ✅ | Per-track SQLite persistence, Typer CLI (`orbit learn` / `status` / `history`), interactive item-by-item scoring, per-topic competence + day-streak tracking |
+| 3 ✅ | EWMA competence, adaptive difficulty, topic-priority selection, spaced-repetition intervals, remediation, `orbit calibrate`, 37 unit tests written before the implementation |
 | 2 | SQLite persistence, `orbit learn` interactive CLI, `orbit status`, `orbit history` |
 | 3 | Adaptive scoring, spaced repetition, remediation, `orbit calibrate` |
 | 4 | Delivery methods (terminal / markdown / email), scheduling via cron or GitHub Actions |
