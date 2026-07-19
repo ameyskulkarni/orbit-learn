@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+
+def _new_id() -> str:
+    return uuid.uuid4().hex
 
 ItemMode = Literal["practice", "teach_then_practice", "review"]
 
@@ -62,6 +67,7 @@ class ItemAssignment(BaseModel):
 class Item(BaseModel):
     """A single learning item as returned by the LLM."""
 
+    id: str = Field(default_factory=_new_id)
     topic: str
     item_type: str
     difficulty: int = Field(ge=1, le=5)
@@ -74,5 +80,6 @@ class Item(BaseModel):
 class Session(BaseModel):
     """A full learning session: a dated list of items ready to present to the learner."""
 
+    id: str = Field(default_factory=_new_id)
     date: str                    # ISO date (YYYY-MM-DD)
     items: list[Item]

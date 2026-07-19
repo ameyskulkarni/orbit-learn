@@ -2,7 +2,7 @@
 
 **Adaptive Daily Learning Engine.** A provider-agnostic, config-driven CLI that generates personalized daily learning sessions with an LLM, tracks your performance, and adapts using spaced repetition and competence-based topic prioritization. A subject is a swappable prompt file — same engine, any domain.
 
-> Status: **Phase 1** (subject files + session generation). Running `python main.py` generates a full 5-item learning session for the active track. Later phases add interactive scoring, persistence, the adaptive engine, and scheduling.
+> Status: **Phase 2** (persistence + interactive CLI). Run `orbit learn` to generate a session and score it item-by-item; results are stored in per-track SQLite. `orbit status` shows per-topic competence; `orbit history` lists past sessions. Later phases add adaptive scoring and scheduling.
 
 ---
 
@@ -35,11 +35,28 @@ cp .env.example .env
 ollama serve &                                # background daemon on :11434
 ollama pull llama3.1:8b                       # matches the default in config.yaml
 
-# Run the hello-world
+# Interactive learning session (Phase 2+):
+poetry run orbit learn
+
+# Or a non-interactive preview of a generated session:
 poetry run python main.py
 ```
 
 That's it — no API keys, no billing, your GPU does the work. Change `model:` in `config.yaml` to any Ollama tag you've pulled (`qwen2.5:14b`, `mistral:7b`, `llama3.2:3b`, etc.).
+
+## Commands
+
+```
+orbit learn [--track <name>]     Generate a new session and score it item-by-item.
+                                 Prompts for optional free-text answer, then a
+                                 self-score of 1-5 per the rubric. Results are
+                                 persisted immediately.
+orbit status [--track <name>]    Per-topic competence, times seen, streak,
+                                 last-seen timestamp. Weakest topics first.
+orbit history [--track <name>]   [--limit N]  Recent sessions with average score.
+```
+
+Each track uses its own SQLite DB at `data/<track>.db`. Nothing writes to `data/` unless you run a command.
 
 ## Running with a hosted API (occasional / higher quality)
 
@@ -95,16 +112,19 @@ orbit-learn/
 ├── pyproject.toml        # Poetry-managed deps and project metadata
 ├── .env.example          # Template for provider API keys
 ├── src/
+│   ├── cli.py            # Typer CLI: orbit learn / status / history
 │   ├── config.py         # Loads and validates config.yaml (Pydantic)
+│   ├── display.py        # Shared Rich rendering (headers, panels, markdown save)
 │   ├── models.py         # SubjectConfig, ItemAssignment, Item, Session
+│   ├── persistence.py    # SQLite: sessions, items, topic_stats, calibration
 │   ├── provider.py       # The ONLY module that imports litellm
 │   ├── session.py        # Build prompt → call LLM → parse JSON → Session
 │   └── subject.py        # Parse subject prompt files → SubjectConfig
 ├── subjects/
 │   ├── ml_interview.md
 │   └── spanish_b2.md
-├── data/                 # (Phase 2) SQLite state, gitignored
-├── output/               # Generated session markdown, gitignored
+├── data/                 # SQLite state, one file per track (gitignored)
+├── output/               # Generated session markdown (gitignored)
 └── docs/design_doc_v1.0.0.md
 ```
 
@@ -125,6 +145,7 @@ See [`docs/design_doc_v1.0.0.md`](docs/design_doc_v1.0.0.md) for the full archit
 |---|---|
 | 0 ✅ | Skeleton, config loader, LiteLLM provider adapter (Ollama + hosted APIs), hello world |
 | 1 ✅ | Subject file parser (ml_interview + spanish_b2), Pydantic session models, JSON-mode LLM call with retries, Rich terminal display, markdown session save |
+| 2 ✅ | Per-track SQLite persistence, Typer CLI (`orbit learn` / `status` / `history`), interactive item-by-item scoring, per-topic competence + day-streak tracking |
 | 2 | SQLite persistence, `orbit learn` interactive CLI, `orbit status`, `orbit history` |
 | 3 | Adaptive scoring, spaced repetition, remediation, `orbit calibrate` |
 | 4 | Delivery methods (terminal / markdown / email), scheduling via cron or GitHub Actions |
