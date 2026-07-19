@@ -103,11 +103,39 @@ class SlackDelivery:
 
 Wire it into `get_delivery()` and add config schema in `config.py`. That's it.
 
-### Adding a scoring strategy (SM-2, FSRS)
+### Adding a scheduling strategy
 
-- Add the pure function in `orbit_learn/scoring.py` behind a strategy flag.
-- Write tests first in `tests/test_scoring.py`.
-- Wire `TrackConfig.scoring_strategy` to select it in `refresh_topic_stats`.
+Orbit ships three: `ewma` (Leitner default), `sm2`, and `fsrs`. All three implement the `SchedulingStrategy` protocol in [`orbit_learn/strategies.py`](orbit_learn/strategies.py) — see design doc §16 for the full spec.
+
+To add a fourth (e.g., a personalized FSRS-5, a custom SM-15 variant, or the reference `fsrs` PyPI package):
+
+1. **Write tests first** in `tests/test_your_strategy.py`. The Phase-3 rule applies to Phase 6 too — deterministic scheduling code is unit-testable and should be tested before it's written.
+
+2. **Implement the protocol** in `orbit_learn/strategies.py`:
+
+   ```python
+   class YourStrategy:
+       name: ClassVar[str] = "your_name"
+
+       def initial_state(self) -> dict:
+           """JSON-serializable per-topic state before the first review."""
+
+       def update(self, state: dict, score: int, review_date: date) -> dict:
+           """Return NEW state after the given 1-5 Orbit score."""
+
+       def interval_days(self, state: dict) -> float:
+           """Days until the topic should next appear."""
+   ```
+
+3. **Register in the factory** — add your class to the `_STRATEGIES` dict in the same file.
+
+4. **Add to the `Literal` type** in `TrackConfig.scoring_strategy` (see [`orbit_learn/config.py`](orbit_learn/config.py)) so config validation accepts it.
+
+That's it. No changes to `persistence.py`, `cli.py`, or the priority function — competence stays EWMA across all strategies (design doc §16.2), so the rest of Orbit doesn't care which scheduler you plug in.
+
+**Grade mapping.** Orbit uses a 1-5 self-score. If your strategy natively uses a different scale (SM-2's 0-5, FSRS's Again/Hard/Good/Easy), map inside `update()`. See `orbit_score_to_fsrs_rating` in strategies.py for an example.
+
+**Recomputing after switching.** `refresh_topic_stats` replays every score for a topic through the current strategy, so switching a track's `scoring_strategy` in `config.yaml` is safe — next `orbit learn` scores an item, `topic_stats` recomputes under the new strategy from full history.
 
 ---
 

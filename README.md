@@ -73,7 +73,7 @@ You're now learning ML interview prep. Change `active_track` in `config.yaml` to
 
 | | |
 |---|---|
-| **🎯 Adaptive** | EWMA competence per topic. Weak topics come back sooner. Mastered ones drift out on doubling intervals. Failed topics get a teaching block at reduced difficulty. |
+| **🎯 Adaptive** | EWMA competence per topic. Pluggable scheduling: choose Leitner (default), SM-2, or FSRS-4.5 per track. Weak topics come back sooner, mastered ones drift out, failed ones get a teaching block at reduced difficulty. |
 | **🧠 Config-driven** | Change the subject with one line. Change the model with one line. Change the delivery method with one line. Zero code. |
 | **🔒 Local by default** | Runs on your GPU via Ollama. No API key, no cloud, no lock-in. Your learning history stays on your machine. |
 | **🔌 Provider-agnostic** | Ollama, Anthropic, OpenAI, Gemini, Groq — one adapter, [LiteLLM](https://github.com/BerriAI/litellm) under the hood. |
@@ -305,7 +305,7 @@ Ways to say hi: open an issue, drop a PR, or star the repo if you like where it'
 - [x] Phase 3 — Adaptive engine (EWMA + spaced repetition + remediation)
 - [x] Phase 4 — Pluggable delivery + scheduling
 - [x] Phase 5 — Multi-track polish + dashboard + bundled subjects
-- [ ] SM-2 / FSRS scoring strategies
+- [x] SM-2 / FSRS scheduling strategies (Phase 6 — [design doc §16](docs/design_doc_v1.0.0.md#16-pluggable-scheduling-strategies-phase-6-detailed-design))
 - [ ] Slack / Telegram / Discord delivery adapters
 - [ ] Voice mode (STT for language tracks)
 - [ ] Collaborative subject registry

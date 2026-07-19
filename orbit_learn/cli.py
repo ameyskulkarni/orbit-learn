@@ -43,7 +43,13 @@ from orbit_learn.persistence import (
 )
 from orbit_learn.scoring import calibration_assignments, next_difficulty, plan_session
 from orbit_learn.session import generate_session
+from orbit_learn.strategies import SchedulingStrategy, get_strategy
 from orbit_learn.subject import load_subject
+
+
+def _strategy_for(cfg: OrbitConfig, track_name: str) -> SchedulingStrategy:
+    """Instantiate the scheduling strategy configured for a track."""
+    return get_strategy(cfg.tracks[track_name].scoring_strategy)
 
 
 def _version_callback(value: bool) -> None:
@@ -95,6 +101,7 @@ def _run_scored_session(
     session: Session,
     assignments: list[ItemAssignment],
     track_name: str,
+    strategy: SchedulingStrategy,
     save_calibration: bool = False,
 ) -> list[int]:
     """Interactive scoring loop. Skips items that already have a stored score."""
@@ -131,7 +138,7 @@ def _run_scored_session(
             show_choices=False,
         )
         record_score(conn, item.id, score, user_answer or None)
-        refresh_topic_stats(conn, track_name, item.topic)
+        refresh_topic_stats(conn, track_name, item.topic, strategy=strategy)
         if save_calibration and item.topic in assignment_by_topic:
             upsert_calibration(conn, track_name, item.topic, score)
         scores.append(score)
@@ -161,6 +168,13 @@ def init(
     checks.append(("Active track", True, cfg.active_track))
     checks.append(("Model", True, cfg.model))
     checks.append(("Delivery method", True, cfg.delivery.method))
+
+    for name, tcfg in cfg.tracks.items():
+        try:
+            get_strategy(tcfg.scoring_strategy)
+            checks.append((f"Strategy [{name}]", True, tcfg.scoring_strategy))
+        except ValueError as e:
+            checks.append((f"Strategy [{name}]", False, str(e)))
 
     for name, tcfg in cfg.tracks.items():
         p = Path(tcfg.subject_file)
@@ -307,7 +321,9 @@ def learn(
             raw_json=session.model_dump_json(indent=2),
         )
 
-        scores = _run_scored_session(conn, session, assignments, track_name)
+        scores = _run_scored_session(
+            conn, session, assignments, track_name, strategy=_strategy_for(cfg, track_name)
+        )
 
         avg = sum(scores) / len(scores) if scores else 0.0
         next_diff = next_difficulty(difficulty, avg)
@@ -364,7 +380,9 @@ def calibrate(
         )
 
         scores = _run_scored_session(
-            conn, session, assignments, track_name, save_calibration=True
+            conn, session, assignments, track_name,
+            strategy=_strategy_for(cfg, track_name),
+            save_calibration=True,
         )
 
         avg = sum(scores) / len(scores) if scores else 0.0
@@ -403,7 +421,8 @@ def status(
         f"[dim]{subject.subject}[/dim]   "
         f"Sessions: [bold]{sessions_done}[/bold]   "
         f"Day streak: [bold]{streak}[/bold]   "
-        f"Difficulty: [bold]{current_diff:.2f}/5[/bold]"
+        f"Difficulty: [bold]{current_diff:.2f}/5[/bold]   "
+        f"Strategy: [bold]{cfg.tracks[track_name].scoring_strategy}[/bold]"
     )
 
     if not rows:
@@ -634,7 +653,10 @@ def score(
             f"[dim]Track: {track_name}   Difficulty at generation: "
             f"{meta['difficulty']:.2f}/5   Unscored: {len(unscored_items)}/{len(session.items)}[/dim]"
         )
-        scored = _run_scored_session(conn, session, assignments=[], track_name=track_name)
+        scored = _run_scored_session(
+            conn, session, assignments=[], track_name=track_name,
+            strategy=_strategy_for(cfg, track_name),
+        )
 
         avg = sum(scored) / len(scored) if scored else 0.0
         console.print()

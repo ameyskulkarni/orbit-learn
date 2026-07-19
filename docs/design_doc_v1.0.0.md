@@ -803,3 +803,218 @@ When building this project:
 8. Write the scoring engine tests (Phase 3) BEFORE implementing the scoring engine. The tests define the expected behavior.
 9. Use Rich for all terminal output. The CLI should feel polished from Phase 2 onward.
 10. After each phase, update README.md with the new commands and capabilities.
+
+---
+
+## 16. Pluggable Scheduling Strategies (Phase 6 detailed design)
+
+This section fleshes out Phase 6's "Pluggable scoring strategies" bullet with a concrete design and delivery plan for SM-2 and FSRS.
+
+### 16.1 Motivation and non-goals
+
+**Why:** The Phase-3 Leitner rule (double / same / reset) is simple and honest, but coarse — a topic scored 5 four times in a row jumps from 1→2→4→8→16 days regardless of *how much easier* the topic is getting. SM-2 tracks per-topic ease so intervals grow smoothly with mastery. FSRS models a forgetting curve directly and predicts intervals from stability, which is the modern evidence-based default in Anki.
+
+**Non-goals for this expansion:**
+
+- Full per-item card tracking. Orbit stays topic-level; a "review event" is a scored item on a topic, not a specific card.
+- Per-user weight training for FSRS. We ship the well-known pretrained defaults; per-user tuning is future work when a track has hundreds of reviews.
+- Backwards-incompatible schema changes. Existing DBs continue to work via a small idempotent migration.
+
+### 16.2 Where competence and scheduling separate
+
+The Phase-3 design conflated two responsibilities in `scoring.py` and `scheduler.py`: **competence** (how well the learner knows a topic — feeds the priority function) and **schedule** (when it should next come back).
+
+The strategy pattern applies only to **scheduling**. Competence stays EWMA (α = 0.3) for every strategy. That preserves the priority function's semantics (a strong topic under FSRS is still a strong topic under Leitner) and avoids a fragile "project internal state to 0-5" step.
+
+If we later want to unify (e.g. FSRS stability ≈ competence), we can — but the separation makes the initial implementation clean and testable.
+
+### 16.3 The `SchedulingStrategy` protocol
+
+```python
+class SchedulingStrategy(Protocol):
+    name: ClassVar[str]                     # "ewma" | "sm2" | "fsrs"
+
+    def initial_state(self) -> dict: ...    # JSON-serializable per-topic state
+    def update(self, state: dict, score: int, review_date: date) -> dict: ...
+    def interval_days(self, state: dict) -> float: ...
+```
+
+Rules:
+
+- `state` is opaque JSON managed by the strategy. Different strategies use different keys.
+- `update` returns a **new** state dict; it never mutates the input.
+- `interval_days` is what we store in `topic_stats.review_interval` and use to compute `next_review = last_scored_date + interval_days`.
+- `review_date` is passed to every strategy — Leitner and SM-2 ignore it; FSRS uses it to compute elapsed time since last review.
+- Score is Orbit's 1-5 self-score; each strategy is responsible for mapping it to its native grading.
+
+### 16.4 SM-2 strategy
+
+State:
+```
+{ "ease_factor": 2.5, "repetition": 0, "interval": 1.0 }
+```
+
+Grade mapping (identity): Orbit 1 ≈ SM-2 "blackout" through Orbit 5 = SM-2 "perfect."
+
+Update on score `q`:
+```
+if q < 3:
+    repetition = 0
+    interval = 1.0                          # reset — review tomorrow
+else:
+    if repetition == 0:  new_interval = 1.0
+    elif repetition == 1: new_interval = 6.0
+    else:                new_interval = interval * ease_factor
+    repetition += 1
+    interval = min(new_interval, MAX_INTERVAL_DAYS)
+
+# EF always updates
+ease_factor = ease_factor + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
+ease_factor = max(EF_FLOOR, ease_factor)    # EF_FLOOR = 1.3 (classic)
+```
+
+Reference EF deltas for the five Orbit scores:
+
+| Score | ΔEF |
+|---|---|
+| 1 | −0.54 |
+| 2 | −0.32 |
+| 3 | −0.14 |
+| 4 | 0 (neutral) |
+| 5 | +0.10 |
+
+`MAX_INTERVAL_DAYS` is a per-strategy cap; SM-2 defaults to 180 days (SM-2's compound growth reaches Anki-scale intervals quickly, but we cap to preserve the "orbit" metaphor).
+
+### 16.5 FSRS strategy
+
+State:
+```
+{ "stability": 3.0, "difficulty": 5.0, "last_reviewed": "2026-07-18" }
+```
+
+`stability` and `difficulty` are `None` before the first review.
+
+Grade mapping:
+
+| Orbit score | FSRS rating |
+|---|---|
+| 1 | Again (1) |
+| 2 | Again (1) |
+| 3 | Hard (2) |
+| 4 | Good (3) |
+| 5 | Easy (4) |
+
+Constants (FSRS-4.5 with public pretrained weights):
+```
+DECAY   = -0.5
+FACTOR  = 19/81                    # so target-retention 0.9 ⇒ interval ≈ stability
+TARGET_RETENTION = 0.9
+W = [                              # 17 weights
+    0.4197, 1.1869, 3.0412, 15.2441,   # initial stability by rating
+    7.1434, 0.6477, 1.0007, 0.0674,    # initial + reversion difficulty
+    1.6597, 0.1712, 1.1178, 2.0225,    # stability update — success
+    0.0904, 0.3025,                    # stability update — lapse
+    2.1214, 0.2498, 2.9466,            # rating bonuses (Hard, Good, Easy)
+]
+```
+
+Update rules:
+
+**First review (state is `None`):**
+```
+stability  = max(0.1, W[rating - 1])                 # 0.4 / 1.2 / 3.0 / 15.2
+difficulty = clamp(W[4] - exp(W[5] * (rating - 1)) + 1, 1, 10)
+```
+
+**Subsequent review:**
+```
+elapsed        = max(0, review_date - last_reviewed).days
+retrievability = (1 + FACTOR * elapsed / stability) ^ DECAY
+D              = current difficulty
+S              = current stability
+
+# Difficulty: shift by rating, then partial mean-reversion toward Easy anchor.
+D_shift   = D - W[6] * (rating - 3)
+D_target  = W[4] - exp(W[5] * (4 - 1)) + 1
+new_D     = clamp(D_shift + W[7] * (D_target - D_shift), 1, 10)
+
+# Stability: two branches.
+if rating == Again:
+    new_S = W[11] * D^(-W[12]) * ((S + 1)^W[13] - 1) * exp((1 - R) * W[14])
+    new_S = min(new_S, S)                # a lapse never increases stability
+else:
+    bonus = { Hard: W[15], Good: 1.0, Easy: W[16] }[rating]
+    new_S = S * (1 + exp(W[8]) * (11 - D) * S^(-W[9]) * (exp((1 - R) * W[10]) - 1) * bonus)
+
+new_S = clamp(new_S, 0.1, MAX_INTERVAL_DAYS)
+```
+
+Interval:
+```
+interval_days(state) = stability_to_interval(new_S, TARGET_RETENTION)
+                     = (S / FACTOR) * (target_retention ^ (1/DECAY) - 1)
+```
+
+With TARGET_RETENTION = 0.9 and DECAY = -0.5 this simplifies to `interval ≈ S` days.
+
+`MAX_INTERVAL_DAYS` defaults to 365 days for FSRS but is capped further at 90 days for Orbit v1 to preserve the "topics orbit back" metaphor. Configurable per track in a future revision.
+
+**Note on fidelity:** this is a faithful FSRS-4.5 implementation but not the full FSRS-5 (which uses 19-21 weights and per-user calibration). Users needing production-grade FSRS should call the reference `fsrs` package via a custom strategy plugin. That path stays open because `SchedulingStrategy` is a protocol, not a hierarchy.
+
+### 16.6 Storage and migration
+
+Add one column to `topic_stats`:
+
+```sql
+strategy_state TEXT NOT NULL DEFAULT '{}'
+```
+
+- **New DBs:** column is part of `CREATE TABLE IF NOT EXISTS`.
+- **Existing DBs:** an idempotent migration in `open_db` checks `PRAGMA table_info(topic_stats)` and issues `ALTER TABLE topic_stats ADD COLUMN strategy_state TEXT NOT NULL DEFAULT '{}'` if absent.
+
+`refresh_topic_stats` already **replays all scores** for a topic to recompute derived state. That means switching a track's `scoring_strategy` in config causes the next refresh to rebuild state under the new strategy — no manual migration.
+
+`review_interval` and `next_review` remain as denormalized cache columns so queries stay fast (`dashboard`, `plan_session` read them directly).
+
+### 16.7 Configuration
+
+Already defined in `TrackConfig.scoring_strategy` since Phase 0. Values `"ewma" | "sm2" | "fsrs"`; default is `"ewma"`. Selection is per-track — one track can use Leitner while another uses FSRS.
+
+Cold-start behavior is identical across strategies: no state → `strategy.initial_state()`.
+
+### 16.8 Testing plan
+
+New test files, written **before** implementation (same rule as Phase 3):
+
+`tests/test_sm2.py`:
+- Initial state values
+- EF deltas for each of scores 1..5 (five parametrized asserts)
+- EF floor at 1.3
+- Interval progression: 1 → 6 → 6·EF → repeats
+- Reset semantics: score < 3 resets `interval` and `repetition`, EF still updates
+- MAX_INTERVAL cap
+
+`tests/test_fsrs.py`:
+- Initial stability by rating (4 asserts)
+- Initial difficulty in [1, 10]
+- Second review: S grows on Good, shrinks-or-same on Again
+- Difficulty stays in [1, 10] after many updates
+- Retrievability at elapsed = stability equals TARGET_RETENTION (formula sanity)
+- `interval_days` returns ≈ stability when TARGET = 0.9
+
+Cross-strategy integration test in `test_strategies.py`:
+- Replay the same 10-score sequence through all three strategies; assert intervals stay positive and finite; assert `LeitnerEWMAStrategy` matches the existing Phase-3 Leitner output exactly (bit-for-bit).
+
+### 16.9 Rollout
+
+- Strategies live in `orbit_learn/strategies.py`. Existing `orbit_learn/scheduler.py` keeps its Leitner primitives; `LeitnerEWMAStrategy` wraps them so 37 existing tests still pass.
+- No CLI change is required for users; `orbit status` and `orbit dashboard` gain a small "strategy: sm2" label but continue to render the same columns.
+- The `orbit init` health check gains a line "scoring strategy: <name>" per track.
+- CONTRIBUTING.md gets an "Adding a scheduling strategy" recipe pointing at the protocol.
+
+### 16.10 Future work
+
+- SM-2+: variants that boost EF on consecutive high scores (SM-15 series).
+- FSRS-5 (21 weights) once reference formulas stabilize.
+- Per-user weight training via `orbit train-fsrs` on exported score history (needs ≥200 scored items).
+- Item-level tracking as an optional layer, for language flashcard-style workflows.
