@@ -9,9 +9,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
-from src.models import Session
-from src.scheduler import INITIAL_INTERVAL, next_interval, next_review_date
-from src.scoring import next_competence
+from orbit_learn.models import Item, Session
+from orbit_learn.scheduler import INITIAL_INTERVAL, next_interval, next_review_date
+from orbit_learn.scoring import next_competence
 
 DB_ROOT = Path("data")
 
@@ -235,6 +235,106 @@ def last_session_state(
     if row is None or row["avg_score"] is None or (row["unscored"] or 0) > 0:
         return None
     return float(row["difficulty"]), float(row["avg_score"])
+
+
+def load_session(
+    conn: sqlite3.Connection, session_id_prefix: str, track: str | None = None
+) -> tuple[Session, dict] | None:
+    """Look up a session by id or unique prefix. Returns (Session, meta) or None if not found.
+
+    Raises ValueError if the prefix matches more than one session (be more specific).
+    Prefers the session's `raw_json` (which preserves `mode` and `teaching_block`), then
+    overlays scoring state (user_score / user_answer / scored_at) from the items table.
+    """
+    where = "id LIKE ?"
+    params: tuple = (session_id_prefix + "%",)
+    if track is not None:
+        where += " AND track = ?"
+        params = params + (track,)
+    session_rows = conn.execute(
+        f"SELECT id, track, date, created_at, difficulty, raw_json "
+        f"  FROM sessions WHERE {where}",
+        params,
+    ).fetchall()
+    if not session_rows:
+        return None
+    if len(session_rows) > 1:
+        matches = ", ".join(r["id"][:8] for r in session_rows[:5])
+        raise ValueError(
+            f"Ambiguous session id {session_id_prefix!r} — matches {len(session_rows)} sessions "
+            f"(e.g. {matches}). Use a longer prefix."
+        )
+    srow = session_rows[0]
+
+    item_rows = conn.execute(
+        "SELECT id, topic, item_type, difficulty, question, expected_answer, "
+        "       user_score, user_answer, scored_at "
+        "  FROM items WHERE session_id = ? ORDER BY rowid",
+        (srow["id"],),
+    ).fetchall()
+
+    session: Session | None = None
+    if srow["raw_json"]:
+        try:
+            session = Session.model_validate_json(srow["raw_json"])
+        except Exception:
+            session = None  # Fall through to DB-only reconstruction.
+
+    if session is None:
+        items = [
+            Item(
+                id=r["id"],
+                topic=r["topic"],
+                item_type=r["item_type"],
+                difficulty=r["difficulty"],
+                mode="practice",       # Best-effort default when raw_json is unavailable.
+                teaching_block=None,
+                question=r["question"],
+                expected_answer=r["expected_answer"],
+            )
+            for r in item_rows
+        ]
+        session = Session(id=srow["id"], date=srow["date"], items=items)
+
+    # Overlay scoring state from the DB (the raw_json snapshot never has user_score).
+    by_id = {r["id"]: r for r in item_rows}
+    for item in session.items:
+        row = by_id.get(item.id)
+        if row is None:
+            continue
+        item.user_score = row["user_score"]
+        item.user_answer = row["user_answer"]
+        item.scored_at = row["scored_at"]
+
+    meta = {
+        "track": srow["track"],
+        "difficulty": float(srow["difficulty"]),
+        "created_at": srow["created_at"],
+        "raw_json": srow["raw_json"],
+    }
+    return session, meta
+
+
+def list_unscored_sessions(
+    conn: sqlite3.Connection, track: str, limit: int = 20
+) -> list[dict]:
+    """Sessions in a track that still have at least one item without a user_score."""
+    rows = conn.execute(
+        """
+        SELECT s.id, s.date, s.created_at, s.difficulty,
+               COUNT(i.id) AS item_count,
+               SUM(CASE WHEN i.user_score IS NULL THEN 1 ELSE 0 END) AS unscored_count
+          FROM sessions s
+          LEFT JOIN items i ON s.id = i.session_id
+         WHERE s.track = ?
+         GROUP BY s.id
+        HAVING unscored_count > 0
+         ORDER BY s.created_at DESC
+         LIMIT ?
+        """,
+        (track, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def upsert_calibration(

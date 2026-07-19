@@ -10,8 +10,8 @@ import sqlite3
 from datetime import date, timedelta
 from typing import Literal
 
-from src.models import ItemAssignment, SubjectConfig
-from src.scheduler import review_urgency
+from orbit_learn.models import ItemAssignment, SubjectConfig
+from orbit_learn.scheduler import review_urgency
 
 # --- Tunables (design doc §7 defaults) ---
 

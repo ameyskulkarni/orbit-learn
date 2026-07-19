@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
 
-from src.models import Item, Session, SubjectConfig
+from orbit_learn.models import Item, Session, SubjectConfig
 
 
 def stars(difficulty: int) -> str:

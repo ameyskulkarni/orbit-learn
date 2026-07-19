@@ -65,7 +65,7 @@ class ItemAssignment(BaseModel):
 
 
 class Item(BaseModel):
-    """A single learning item as returned by the LLM."""
+    """A single learning item as returned by the LLM, optionally annotated with scoring state."""
 
     id: str = Field(default_factory=_new_id)
     topic: str
@@ -75,6 +75,11 @@ class Item(BaseModel):
     teaching_block: str | None = None
     question: str
     expected_answer: str | None = None
+
+    # Scoring state (populated when an Item is loaded from the DB; None on freshly generated items).
+    user_score: int | None = None
+    user_answer: str | None = None
+    scored_at: str | None = None
 
 
 class Session(BaseModel):

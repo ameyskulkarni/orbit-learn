@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-from src.models import SubjectConfig
+from orbit_learn.models import SubjectConfig
 
 REQUIRED_FIELDS = [
     "SUBJECT",

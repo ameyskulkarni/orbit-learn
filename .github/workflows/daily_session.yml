@@ -1,0 +1,62 @@
+# Daily Orbit session — runs the adaptive engine on a schedule and commits state back.
+#
+# GitHub Actions runners CANNOT reach your local Ollama, so this workflow assumes a
+# hosted API model (Anthropic / OpenAI / Gemini / Groq). Update `config.yaml`'s `model:`
+# line before the first scheduled run, and add the matching API key as a repo secret.
+#
+# STATE IS COMMITTED BACK: every run writes `data/<track>.db` and (for markdown delivery)
+# `output/<track>/<date>.md` and pushes them. That means your learning history is public
+# if the repo is public. Use a private repo, or switch to email delivery so nothing gets
+# committed except the DB.
+
+name: Daily session
+
+on:
+  schedule:
+    # 08:00 UTC every day. Adjust to your timezone (crontab.guru).
+    - cron: "0 8 * * *"
+  workflow_dispatch: {}   # Allow manual trigger from the Actions tab.
+
+jobs:
+  learn:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # Needed to push the updated DB back to the repo.
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Install project (no dev deps)
+        run: poetry install --without dev
+
+      - name: Generate + deliver session
+        env:
+          # Pick the one that matches your `model:` line in config.yaml.
+          # Store the value under Settings → Secrets and variables → Actions.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ORBIT_EMAIL_PASSWORD: ${{ secrets.ORBIT_EMAIL_PASSWORD }}
+        run: poetry run orbit run
+
+      - name: Commit updated state
+        run: |
+          git config user.name  "orbit-bot"
+          git config user.email "orbit-bot@users.noreply.github.com"
+          # `data/` and `output/` are in .gitignore; -f overrides for these artifact folders.
+          git add -f data/*.db output/**/*.md 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "orbit: session for $(date -u +%Y-%m-%d)"
+            git push
+          else
+            echo "Nothing to commit."
+          fi
