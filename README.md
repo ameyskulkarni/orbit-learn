@@ -5,6 +5,8 @@ Study anything — daily.
 
 <div align="center">
 
+<img src="docs/images/orbit-hero.png" alt="Orbit — your AI tutor, every day, everywhere" width="720">
+
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-37%20passing-brightgreen.svg)](tests/)
@@ -66,6 +68,14 @@ poetry run orbit learn                    # 🚀 your first real session
 You're now learning ML interview prep. Change `active_track` in `config.yaml` to swap subjects. Add a new track by writing a markdown file. **No Python edits.**
 
 > **Prefer a hosted API?** In `config.yaml`, comment the Ollama `model:` line and uncomment one of the alternatives (Gemini's `flash` tier is free). Then set the matching key in `.env`.
+
+---
+
+<div align="center">
+
+<img src="docs/images/orbit-overview.png" alt="Orbit feature overview — adaptive engine, teach then practice, config-driven, local-first, provider-agnostic, subjects, supported providers, and quickstart" width="900">
+
+</div>
 
 ---
 
